@@ -1,13 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim #随机梯度下降（SGD）、Adam、Adagrad、RMSprop
+import torch.optim as optim
 import torch_geometric
 from torch_scatter import scatter_add
 import numpy as np
 import torch.optim as optim
 import os, random
-import RGNN_with_trans
+import SGCTNet
 import pandas as pd
 from scipy.spatial import distance_matrix
 import scipy.io
@@ -47,7 +47,7 @@ def dependent_loaders(batch_size, K):#提取第K个受试者的数据//实验没
 
         num = []
         if session==3:
-            for i in range(4):#随机取某个同类实验
+            for i in range(4):
                 num.append(trial[i][4])
                 num.append(trial[i][5])
         else :pass
@@ -60,32 +60,24 @@ def dependent_loaders(batch_size, K):#提取第K个受试者的数据//实验没
             y = session_labels[videoclip]
             y = torch.tensor([y]).long()
             edge_index = torch.tensor(np.array([np.arange(62*62)//62, np.arange(62*62)%62]))
-            for t in range(X_psd.shape[1]):#每一列？
+            for t in range(X_psd.shape[1]):
                 x_psd = torch.tensor(X_psd[:, t, :]).float()
-                x_psd = (x_psd-x_psd.mean())/x_psd.std()#这里就进行了标准化
+                x_psd = (x_psd-x_psd.mean())/x_psd.std()
                 x_de = torch.tensor(X_de[:, t, :]).float()
                 x_de = (x_de-x_de.mean())/x_de.std()
-                '''
-                if videoclip >= 16:#24个实验，前16个为训练集，后8个为测试集
-                    eeg_dict["test"].append((torch_geometric.data.Data(x=x_psd, y=y, edge_index=edge_index),torch_geometric.data.Data(x=x_de, y=y, edge_index=edge_index)))
-                else :
-                    eeg_dict["train"].append((torch_geometric.data.Data(x=x_psd, y=y, edge_index=edge_index),torch_geometric.data.Data(x=x_de, y=y, edge_index=edge_index)))
-                '''
+                
                 if session == 3:
-                #保证测试集和验证集的分类的分布相同
                    if videoclip == num[0] or videoclip == num[1] or videoclip == num[2] or videoclip == num[3] or videoclip == num[4] or videoclip == num[5] or videoclip == num[6] or videoclip == num[7]:#24个实验，四类情绪分别随机取2个实验，一个session测试集为8个
                        eeg_dict["test"].append((torch_geometric.data.Data(x=x_psd, y=y, edge_index=edge_index),torch_geometric.data.Data(x=x_de, y=y, edge_index=edge_index)))
                    else:
                        eeg_dict["train"].append((torch_geometric.data.Data(x=x_psd, y=y, edge_index=edge_index),torch_geometric.data.Data(x=x_de, y=y, edge_index=edge_index)))
                 else:  eeg_dict["train"].append((torch_geometric.data.Data(x=x_psd, y=y, edge_index=edge_index),torch_geometric.data.Data(x=x_de, y=y, edge_index=edge_index)))
     loaders_dict = {"train":[], "test":[]}
-    
-    # loaders_dict["train"] = torch_geometric.loader.DataLoader(eeg_dict["train"], batch_size=batch_size, shuffle=True, drop_last=False)#drop_last：如果为True，最后一个不完整的批次将被丢弃
     loaders_dict["test"] = torch_geometric.loader.DataLoader(eeg_dict["test"], batch_size=batch_size, shuffle=False, drop_last=False)            
     
     return  loaders_dict["test"]
 
-def get_adjacency_matrix():#在location中找到对应的Channel位置
+def get_adjacency_matrix():
     channel_order =pd.read_excel(root_dir+"Channel Order.xlsx", header=None)
     channel_location = pd.read_csv(root_dir+"channel_locations.txt", sep="\t",header=None)
     channel_location.columns = ["Channel", "X", "Y", "Z"]
@@ -95,25 +87,24 @@ def get_adjacency_matrix():#在location中找到对应的Channel位置
         for used in channel_order[0]:
             if channel == used:
                 filtered_df = pd.concat([channel_location.loc[channel_location['Channel']==channel],filtered_df], ignore_index=True)
-                # Concatenate each row from the "channel_location" dataframe whose channel name is present in the Excel sheet
+               
 
-    filtered_df = filtered_df.reindex(index=filtered_df.index[::-1]).reset_index(drop=True)#将DataFrame对象filtered_df的索引进行倒序排列，并通过设置drop=True参数来删除原来的索引列。最后将结果赋值给filtered_df变量。
-    filtered_matrix = np.asarray(filtered_df.values[:, 1:4], dtype=float)#用于将输入的数据转换为 NumPy 数组
+    filtered_df = filtered_df.reindex(index=filtered_df.index[::-1]).reset_index(drop=True)
+    filtered_matrix = np.asarray(filtered_df.values[:, 1:4], dtype=float)
 
-    distances_matrix = distance_matrix(filtered_matrix, filtered_matrix)## Compute a matrix of distances for each combination of channels in the filtered_matrix dataframe
+    distances_matrix = distance_matrix(filtered_matrix, filtered_matrix)
     
     delta = 10
-    adjacency_matrix = np.minimum(np.ones([62,62]), delta/(distances_matrix**2)) # Computes the adjacency matrix cells as min(1, delta/d_ij), N.B. zero division error can arise here for the diagonal cells, "1" value will be chosen automatically instead
+    adjacency_matrix = np.minimum(np.ones([62,62]), delta/(distances_matrix**2))
 
     return torch.tensor(adjacency_matrix).float()
 
 def get_model(subj_num=1,session_num=1):
     edge_weight = get_adjacency_matrix()
-    model = RGNN_with_trans.FuseModel(62, True, edge_weight.to(device), 5, 16, 4).to(device)
+    model = SGCTNet.FuseModel(62, True, edge_weight.to(device), 5, 16, 4).to(device)
     
     model_weight_path = f"./log_session3/SGCNT_{subj_num}.pt"
     model.load_state_dict(torch.load(model_weight_path, map_location=torch.device('cpu')))
-    # model.load_state_dict(torch.load(model_weight_path))
     model.eval()
     return model
 
@@ -176,8 +167,6 @@ print(y_score.shape, y_true.shape)
 y_score = y_score.cpu().numpy()
 y_true = y_true.cpu().numpy()
 
-# from sklearn.preprocessing import MinMaxScaler
-# y_score = MinMaxScaler().fit_transform(y_score) # 归一化【0,1】
 print(np.bincount(y_true))
 
 for i in range(100):
@@ -187,89 +176,6 @@ for i in range(100):
 
 print(len(y_true))
 
-# import numpy as np
-# import matplotlib.pyplot as plt
-# from sklearn.metrics import precision_recall_curve, auc, average_precision_score
-# from sklearn.preprocessing import label_binarize
-# from scipy.interpolate import interp1d
-
-# # 假设 y_true 和 y_score 已经定义
-# # y_true: 原始标签，形状 (N,)；取值范围是 [0, n_classes - 1]
-# # y_score: 预测的概率分数，形状为 (N, n_classes)
-
-# plt.rcParams['font.family'] = 'Times New Roman'
-
-# n_classes = 4
-# class_labels = ['NE', 'SA', 'FE', 'HA']
-# colors = ['#ffb347', '#aec6cf', '#77dd77', '#cdb4db']
-
-# # 将真实标签二值化
-# y_true_bin = label_binarize(y_true, classes=[0, 1, 2, 3])
-
-# # 1. 绘制每个类别的 PR 曲线并存储 (precision, recall)
-# plt.figure(figsize=(7, 6))
-# precision_list, recall_list = [], []
-# aucs = []
-
-# for i, color in enumerate(colors):
-#     precision_i, recall_i, _ = precision_recall_curve(y_true_bin[:, i], y_score[:, i])
-#     auc_i = average_precision_score(y_true_bin[:, i], y_score[:, i])
-#     aucs.append(auc_i)
-    
-#     # 将各类别曲线设为“虚线”（--）
-#     plt.plot(
-#         recall_i,
-#         precision_i,
-#         color=color,
-#         linestyle='--',   # <--- 改成虚线
-#         lw=2,
-#         label=f'{class_labels[i]} (area = {auc_i:.4f})'
-#     )
-    
-#     precision_list.append(precision_i)
-#     recall_list.append(recall_i)
-
-
-
-# # 2. 计算并绘制 Macro-average PR 曲线（实线）
-# all_recall = np.linspace(0, 1, 100)
-
-# precision1, recall2, _ = precision_recall_curve(y_true_bin.ravel(),y_score.ravel())
-# average_precision = average_precision_score(y_true_bin, y_score, average="macro")
-
-# plt.plot(
-#     recall2,
-#     precision1,
-#     color='#8B0000',
-#     linestyle='-',  # <--- 改成实线
-#     lw=2,
-#     label=f'Macro-average (area = {average_precision:.4f})'
-# )
-
-# # # 3. 计算并绘制 Micro-average PR 曲线（实线）
-# # precision3, recall4, _ = precision_recall_curve(y_true_bin.ravel(),y_score.ravel())
-# # average_precision2 = average_precision_score(y_true_bin, y_score, average="micro")
-
-# # plt.plot(
-# #     recall4,
-# #     precision3,
-# #     color='#4b0082',
-# #     linestyle='-',  # <--- 改成实线
-# #     lw=2,
-# #     label=f'Micro-average (area = {average_precision2:.4f})'
-# # )
-
-
-# print('Average precision score, macro-averaged over all classes: {0:0.4f}'.format(average_precision))
-
-# # 4. 图形样式设置并显示
-# plt.xlabel('Recall', fontsize=14)
-# plt.ylabel('Precision', fontsize=14)
-# plt.title('PR Curve - SGCTNet', fontsize=16)
-# plt.legend(loc='best', fontsize=12)
-# plt.grid(alpha=0.5)
-# plt.tight_layout()
-# plt.show()
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import precision_recall_curve, auc, average_precision_score
