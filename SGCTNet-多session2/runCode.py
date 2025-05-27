@@ -173,7 +173,7 @@ def subject_dependent_training(data_loaders, K,edge_weight, rand_adj=False, L1_a
             loss = None
             optimizer.zero_grad()
             target = emoDL_map[y_list].to(dev)
-            loss = F.kl_div(F.log_softmax(pred_fuse, -1), target, reduction="sum") +  L1_alpha * torch.norm(edge_weight_fuse)  + stop_with_loss.parameter_Regular(model,lambada=0.001)#+ L1_alpha/3 * torch.norm(edge_weight_psd) + L1_alpha/3 * torch.norm(edge_weight_de)
+            loss = F.kl_div(F.log_softmax(pred_fuse, -1), target, reduction="sum") +  L1_alpha * torch.norm(edge_weight_fuse)  + stop_with_loss.parameter_Regular(model,lambada=0.001)
 
             pred_target = pred_fuse.max(1)
 
